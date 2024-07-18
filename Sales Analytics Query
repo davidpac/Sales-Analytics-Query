@@ -4,7 +4,7 @@ WITH date_info AS (
         DATE_TRUNC('quarter', CURRENT_DATE - INTERVAL '1 day') AS quarter_start,
         EXTRACT(QUARTER FROM CURRENT_DATE - INTERVAL '1 day') AS current_quarter,
         EXTRACT(YEAR FROM CURRENT_DATE - INTERVAL '1 day') AS current_year
-    -- Subtracting 1 day ensures we're always looking at the most recently completed quarter
+    FROM commercial_operations.goals -- Assuming 'goals' table is representative of the dataset
 ),
 
 -- CTE to calculate territory performance metrics
@@ -16,8 +16,8 @@ territory_performance AS (
         SUM(dispenses) / NULLIF(SUM(goal), 0) * 100 AS attainment_percentage, -- Avoid division by zero
         di.current_quarter,
         di.current_year
-    FROM commericial_operations.territory_data, date_info di
-    WHERE DATE_TRUNC('quarter', date) = di.quarter_start -- Filter for the current quarter
+    FROM commercial_operations.territory_data td, date_info di
+    WHERE DATE_TRUNC('quarter', td.date) = di.quarter_start -- Filter for the current quarter
     GROUP BY territory, di.current_quarter, di.current_year
 ),
 
@@ -29,13 +29,13 @@ hcp_summary AS (
         zip,
         territory,
         tier,
-        COUNT(dispenses) AS dispenses,
+        Sum(dispenses) AS dispenses,
         RANK() OVER (ORDER BY COUNT(dispenses) DESC) AS rank,
         COUNT(dispenses) * 100.0 / NULLIF(SUM(COUNT(dispenses)) OVER (), 0) AS percentage, -- Calculate percentage of total dispenses
         di.current_quarter,
         di.current_year
-    FROM commercial_operations.hcp_data, date_info di
-    WHERE DATE_TRUNC('quarter', date) = di.quarter_start -- Filter for the current quarter
+    FROM commercial_operations.hcp_data hd, date_info di
+    WHERE DATE_TRUNC('quarter', hd.date) = di.quarter_start -- Filter for the current quarter
     GROUP BY hcp_name, specialty, zip, territory, tier, di.current_quarter, di.current_year
 ),
 
@@ -44,11 +44,11 @@ ic_data AS (
     SELECT 
         rep_name,
         expected_ic,
-        ROW_NUMBER() OVER (ORDER BY expected_ic DESC) AS expected_rank, -- Rank reps by expected IC
+        Dense_rank() OVER (ORDER BY expected_ic DESC) AS expected_rank, -- Rank reps by expected IC
         di.current_quarter,
         di.current_year
-    FROM commercial_operations.ic_calculations, date_info di
-    WHERE DATE_TRUNC('quarter', date) = di.quarter_start -- Filter for the current quarter
+    FROM commercial_operations.ic_calculations ic, date_info di
+    WHERE DATE_TRUNC('quarter', ic.date) = di.quarter_start -- Filter for the current quarter
 )
 
 -- Main query to combine all data for the dashboard
