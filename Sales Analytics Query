@@ -1,0 +1,81 @@
+-- CTE to determine the current quarter and year
+WITH date_info AS (
+    SELECT 
+        DATE_TRUNC('quarter', CURRENT_DATE - INTERVAL '1 day') AS quarter_start,
+        EXTRACT(QUARTER FROM CURRENT_DATE - INTERVAL '1 day') AS current_quarter,
+        EXTRACT(YEAR FROM CURRENT_DATE - INTERVAL '1 day') AS current_year
+    -- Subtracting 1 day ensures we're always looking at the most recently completed quarter
+),
+
+-- CTE to calculate territory performance metrics
+territory_performance AS (
+    SELECT 
+        territory,
+        SUM(dispenses) AS qtd_dispenses,
+        SUM(goal) AS qtd_goals,
+        SUM(dispenses) / NULLIF(SUM(goal), 0) * 100 AS attainment_percentage, -- Avoid division by zero
+        di.current_quarter,
+        di.current_year
+    FROM commericial_operations.territory_data, date_info di
+    WHERE DATE_TRUNC('quarter', date) = di.quarter_start -- Filter for the current quarter
+    GROUP BY territory, di.current_quarter, di.current_year
+),
+
+-- CTE to summarize HCP (Healthcare Provider) data
+hcp_summary AS (
+    SELECT 
+        hcp_name,
+        specialty AS spec,
+        zip,
+        territory,
+        tier,
+        COUNT(dispenses) AS dispenses,
+        RANK() OVER (ORDER BY COUNT(dispenses) DESC) AS rank,
+        COUNT(dispenses) * 100.0 / NULLIF(SUM(COUNT(dispenses)) OVER (), 0) AS percentage, -- Calculate percentage of total dispenses
+        di.current_quarter,
+        di.current_year
+    FROM commercial_operations.hcp_data, date_info di
+    WHERE DATE_TRUNC('quarter', date) = di.quarter_start -- Filter for the current quarter
+    GROUP BY hcp_name, specialty, zip, territory, tier, di.current_quarter, di.current_year
+),
+
+-- CTE to calculate Incentive Compensation (IC) data
+ic_data AS (
+    SELECT 
+        rep_name,
+        expected_ic,
+        ROW_NUMBER() OVER (ORDER BY expected_ic DESC) AS expected_rank, -- Rank reps by expected IC
+        di.current_quarter,
+        di.current_year
+    FROM commercial_operations.ic_calculations, date_info di
+    WHERE DATE_TRUNC('quarter', date) = di.quarter_start -- Filter for the current quarter
+)
+
+-- Main query to combine all data for the dashboard
+SELECT 
+    tp.territory,
+    tp.qtd_dispenses,
+    tp.qtd_goals,
+    tp.attainment_percentage,
+    hs.hcp_name,
+    hs.spec,
+    hs.zip,
+    hs.tier,
+    hs.rank,
+    hs.percentage,
+    hs.dispenses,
+    ic.rep_name,
+    ic.expected_ic,
+    ic.expected_rank,
+    CONCAT('Q', tp.current_quarter, ' ', tp.current_year) AS quarter_year -- Format quarter and year for display
+FROM territory_performance tp
+LEFT JOIN hcp_summary hs ON tp.territory = hs.territory 
+    AND tp.current_quarter = hs.current_quarter 
+    AND tp.current_year = hs.current_year -- Ensure joining on the same quarter and year
+LEFT JOIN ic_data ic ON tp.current_quarter = ic.current_quarter 
+    AND tp.current_year = ic.current_year -- Ensure joining on the same quarter and year
+WHERE tp.territory IN ('Morristown, NJ', 'Manhattan, NY', 'King of Prussia, PA', 'Brooklyn/Queens, NY', 
+                       'Princeton, NJ', 'Paramus, NJ', 'Philadelphia, PA', 'Long Island, NY')
+    -- Filter for specific territories of interest
+ORDER BY tp.attainment_percentage DESC, hs.rank ASC, ic.expected_rank ASC;
+-- Order results by attainment percentage, HCP rank, and expected IC rank
